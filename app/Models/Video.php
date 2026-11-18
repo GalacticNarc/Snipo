@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class Video extends Model
 {
-    protected $fillable = ['slug', 'title', 'mime', 'extension', 'size', 'chunks', 'duration', 'views', 'has_thumbnail', 'status'];
+    protected $fillable = ['user_id', 'slug', 'title', 'mime', 'extension', 'size', 'chunks', 'duration', 'views', 'has_thumbnail', 'status'];
 
     protected $casts = [
         'has_thumbnail' => 'boolean',
@@ -23,14 +26,36 @@ class Video extends Model
         return $slug;
     }
 
-    public function filePath(): string
+    public static function disk(): Filesystem
     {
-        return storage_path("app/private/videos/{$this->slug}.{$this->extension}");
+        return Storage::disk(config('snipo.disk'));
     }
 
-    public function thumbPath(): string
+    public function user(): BelongsTo
     {
-        return storage_path("app/private/videos/{$this->slug}.jpg");
+        return $this->belongsTo(User::class);
+    }
+
+    public function isOwnedBy(?User $user): bool
+    {
+        return $user !== null && $this->user_id === $user->id;
+    }
+
+    /** Path of the finished video on the storage disk. */
+    public function fileKey(): string
+    {
+        return "videos/{$this->slug}.{$this->extension}";
+    }
+
+    public function thumbKey(): string
+    {
+        return "thumbs/{$this->slug}.jpg";
+    }
+
+    /** Local temp file the chunks are appended to while uploading. */
+    public function tempPath(): string
+    {
+        return storage_path("app/private/uploads/{$this->slug}.part");
     }
 
     public function durationLabel(): string

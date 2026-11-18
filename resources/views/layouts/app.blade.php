@@ -45,6 +45,10 @@
         .muted { color: var(--muted); }
         .flash { padding: 10px 14px; border-radius: 10px; background: var(--surface-2); margin-bottom: 18px; }
         h1 { font-size: 24px; margin: 0; }
+        .nav { display: flex; align-items: center; gap: 8px; }
+        .nav form { margin: 0; }
+        .btn-ghost { border-color: transparent; background: transparent; }
+        @media (max-width: 600px) { .who { display: none; } .nav .btn { padding: 8px 12px; } }
         @media (max-width: 600px) { .topbar, .wrap { padding-left: 16px; padding-right: 16px; } }
     </style>
     @stack('head')
@@ -52,7 +56,16 @@
 <body>
 <header class="topbar">
     <a class="brand" href="{{ route('videos.index') }}"><span class="brand-dot"></span>{{ config('app.name') }}</a>
-    <a class="btn btn-rec" href="{{ route('videos.record') }}">● New recording</a>
+    <nav class="nav">
+        @auth
+            <span class="who muted">{{ auth()->user()->name }}</span>
+            <form method="post" action="{{ route('logout') }}">@csrf<button class="btn btn-ghost">Log out</button></form>
+            <a class="btn btn-rec" href="{{ route('videos.record') }}">● New recording</a>
+        @else
+            <a class="btn btn-ghost" href="{{ route('login') }}">Log in</a>
+            <a class="btn btn-primary" href="{{ route('register') }}">Sign up</a>
+        @endauth
+    </nav>
 </header>
 <main class="wrap">
     @if (session('status'))

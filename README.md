@@ -46,7 +46,20 @@ Set the app name with `APP_NAME=Snipo` in `.env`.
 | Routes | `routes/web.php` |
 | Video files | `storage/app/private/videos/` (not public; streamed through the app) |
 
+## Accounts
+
+People sign up with email and password. Each person sees and manages only their own videos. Share links (`/v/...`) work for anyone, without an account.
+
+## Putting it online for free (Render + Supabase)
+
+- **Render** runs the Laravel app (Docker, free plan). It sleeps after 15 idle minutes, so the first visit can take ~1 minute.
+- **Supabase** holds the database (Postgres) and the video files (Storage, S3-compatible, bucket `videos`).
+
+Steps: create a private `videos` bucket and S3 access keys in Supabase, then in Render choose **New → Blueprint**, pick this repo, and fill in `APP_KEY`, `DB_URL`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Everything else is set in `render.yaml`.
+
+Free-plan limits: 5-minute / 50 MB videos (set with `MAX_RECORDING_SECONDS` and `MAX_VIDEO_MB`), 1 GB of storage in total.
+
 ## Notes
 
 - Screen recording only works on `localhost` or HTTPS.
-- There are no user accounts yet: anyone who can open the app can record and delete videos. Add authentication before putting it online.
+- Tests: `php artisan test`

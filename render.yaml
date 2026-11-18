@@ -1,0 +1,50 @@
+# Render Blueprint: New → Blueprint → pick this repo. Render asks for the values marked sync: false.
+services:
+  - type: web
+    name: snipo
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /up
+    envVars:
+      - key: APP_NAME
+        value: Snipo
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_KEY
+        sync: false
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: SESSION_DRIVER
+        value: database
+      - key: CACHE_STORE
+        value: database
+      - key: QUEUE_CONNECTION
+        value: sync
+      # Supabase Postgres (Session pooler connection string)
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_URL
+        sync: false
+      # Supabase Storage (S3-compatible), bucket "videos"
+      - key: VIDEO_DISK
+        value: s3
+      - key: AWS_BUCKET
+        value: videos
+      - key: AWS_DEFAULT_REGION
+        value: ap-northeast-1
+      - key: AWS_ENDPOINT
+        value: https://animnxidkhhkzxrptjpd.storage.supabase.co/storage/v1/s3
+      - key: AWS_USE_PATH_STYLE_ENDPOINT
+        value: "true"
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      # Supabase free plan: 50 MB per file → 5-minute videos
+      - key: MAX_VIDEO_MB
+        value: "50"
+      - key: MAX_RECORDING_SECONDS
+        value: "300"

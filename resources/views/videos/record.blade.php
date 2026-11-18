@@ -71,6 +71,9 @@
                 <button class="btn btn-rec btn-lg" id="startBtn" hidden>● 2. Start recording</button>
                 <button class="btn" id="changeBtn" hidden>Change screen</button>
                 <div class="error" id="error" hidden></div>
+                @if ($maxSeconds)
+                    <div class="tip muted">Videos can be up to {{ intdiv($maxSeconds, 60) }} minutes long. Recording stops automatically at the limit.</div>
+                @endif
                 <div class="tip muted">Tip: while recording, use the floating bubble's <strong>Stop</strong> button, or the browser's “Stop sharing” bar.</div>
             </div>
         </div>
@@ -111,6 +114,13 @@
     };
     const CSRF = document.querySelector('meta[name=csrf-token]').content;
     const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB (server limit is 40 MB per request)
+    const MAX_SECONDS = @json((int) $maxSeconds); // 0 = no limit
+    const MAX_MB = @json((int) $maxMb);           // 0 = no limit
+    const DEBUG = @json((bool) config('app.debug'));
+    // Pick a bitrate that keeps a max-length recording under the size limit.
+    const VIDEO_BPS = (MAX_SECONDS && MAX_MB)
+        ? Math.max(500_000, Math.min(2_500_000, Math.floor(MAX_MB * 8 * 1048576 * 0.85 / MAX_SECONDS) - 128_000))
+        : 2_500_000;
 
     const $ = id => document.getElementById(id);
     const els = {
@@ -130,7 +140,7 @@
     let elapsedMs = 0, segmentStart = 0, tick = null, cancelled = false, busy = false;
 
     // ---------- helpers ----------
-    const dlog = msg => { try { fetch(@json(url('/debug-log')), { method: 'POST', headers: { 'X-CSRF-TOKEN': CSRF, 'Content-Type': 'application/json' }, body: JSON.stringify({ msg }) }); } catch (e) {} };
+    const dlog = msg => { if (!DEBUG) return; try { fetch(@json(url('/debug-log')), { method: 'POST', headers: { 'X-CSRF-TOKEN': CSRF, 'Content-Type': 'application/json' }, body: JSON.stringify({ msg }) }); } catch (e) {} };
     window.addEventListener('error', e => dlog('JS error: ' + e.message + ' @' + e.lineno));
     window.addEventListener('unhandledrejection', e => dlog('Promise error: ' + (e.reason && (e.reason.name + ' ' + e.reason.message))));
     const showError = msg => { els.error.textContent = msg; els.error.hidden = !msg; if (msg) dlog('shown error: ' + msg); };
@@ -305,7 +315,7 @@
         for (const n of [3, 2, 1]) { setCountdown(String(n)); await new Promise(r => setTimeout(r, 1000)); if (cancelled) return; }
         setCountdown('');
 
-        recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2_500_000 });
+        recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: VIDEO_BPS, audioBitsPerSecond: 96_000 });
         recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
         recorder.onstop = onRecorderStop;
         recorder.start(1000);
@@ -317,7 +327,9 @@
     }
 
     function updateTimer() {
-        const t = fmt(currentElapsed());
+        const ms = currentElapsed();
+        if (MAX_SECONDS && ms >= MAX_SECONDS * 1000 && recorder && recorder.state !== 'inactive') { stopRecording(); return; }
+        const t = MAX_SECONDS ? `${fmt(ms)} / ${fmt(MAX_SECONDS * 1000)}` : fmt(ms);
         els.timer.textContent = t;
         if (pipTimer) pipTimer.textContent = t;
     }

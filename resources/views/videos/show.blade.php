@@ -31,8 +31,13 @@
 
     <div class="info">
         <div class="grow">
-            <input class="title-input" id="title" value="{{ $video->title }}" maxlength="150" aria-label="Video title">
+            @if ($isOwner)
+                <input class="title-input" id="title" value="{{ $video->title }}" maxlength="150" aria-label="Video title">
+            @else
+                <h1 style="font-size:22px">{{ $video->title }}</h1>
+            @endif
             <div class="meta muted">
+                @unless ($isOwner) {{ $video->user?->name }} · @endunless
                 {{ $video->created_at->format('M j, Y g:i A') }} · {{ $video->durationLabel() }} · {{ $video->sizeLabel() }} ·
                 <span id="views">{{ $video->views }}</span> {{ Str::plural('view', $video->views) }}
                 <span class="saved" id="saved">Saved ✓</span>
@@ -41,10 +46,12 @@
         <div class="actions">
             <button class="btn btn-primary" id="copy">Copy link</button>
             <a class="btn" href="{{ route('videos.download', $video) }}">Download</a>
-            <form method="post" action="{{ route('videos.destroy', $video) }}" onsubmit="return confirm('Delete this video permanently?')">
-                @csrf @method('delete')
-                <button class="btn btn-danger">Delete</button>
-            </form>
+            @if ($isOwner)
+                <form method="post" action="{{ route('videos.destroy', $video) }}" onsubmit="return confirm('Delete this video permanently?')">
+                    @csrf @method('delete')
+                    <button class="btn btn-danger">Delete</button>
+                </form>
+            @endif
         </div>
     </div>
 @endsection
@@ -81,8 +88,9 @@
         e.target.textContent = 'Copied ✓'; setTimeout(() => e.target.textContent = 'Copy link', 1500);
     });
 
-    // Rename on blur / Enter.
+    // Rename on blur / Enter (owner only).
     const title = document.getElementById('title');
+    if (title) {
     let lastTitle = title.value;
     async function saveTitle() {
         const v = title.value.trim();
@@ -100,5 +108,6 @@
     }
     title.addEventListener('blur', saveTitle);
     title.addEventListener('keydown', e => { if (e.key === 'Enter') title.blur(); if (e.key === 'Escape') { title.value = lastTitle; title.blur(); } });
+    }
 </script>
 @endpush

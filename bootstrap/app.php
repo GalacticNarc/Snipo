@@ -11,7 +11,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // Render (and most hosts) sit behind a proxy that handles HTTPS.
+        $middleware->trustProxies(at: '*');
+        $middleware->redirectGuestsTo(fn () => route('login'));
+        $middleware->redirectUsersTo(fn () => route('videos.index'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

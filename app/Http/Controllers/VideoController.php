@@ -8,10 +8,10 @@ use Illuminate\Support\Facades\File;
 
 class VideoController extends Controller
 {
-    /** Library: all ready videos. */
-    public function index()
+    /** Library: the signed-in user's videos. */
+    public function index(Request $request)
     {
-        $videos = Video::where('status', 'ready')->latest()->get();
+        $videos = $request->user()->videos()->where('status', 'ready')->latest()->get();
 
         return view('videos.index', compact('videos'));
     }
@@ -19,7 +19,10 @@ class VideoController extends Controller
     /** Recorder page. */
     public function record()
     {
-        return view('videos.record');
+        return view('videos.record', [
+            'maxSeconds' => config('snipo.max_seconds'),
+            'maxMb' => config('snipo.max_mb'),
+        ]);
     }
 
     /** Start an upload: creates the DB row and returns the slug. */
@@ -35,14 +38,14 @@ class VideoController extends Controller
             abort(422, 'Unsupported video format.');
         }
 
-        File::ensureDirectoryExists(storage_path('app/private/videos'));
-
-        $video = Video::create([
+        $video = $request->user()->videos()->create([
             'slug' => Video::newSlug(),
             'title' => ($data['title'] ?? null) ?: 'Recording '.now()->format('M j, Y g:i A'),
             'mime' => $isMp4 ? 'video/mp4' : 'video/webm',
             'extension' => $isMp4 ? 'mp4' : 'webm',
         ]);
+
+        File::ensureDirectoryExists(dirname($video->tempPath()));
 
         return response()->json(['slug' => $video->slug]);
     }
@@ -50,6 +53,7 @@ class VideoController extends Controller
     /** Append one chunk (chunks must arrive in order). */
     public function chunk(Request $request, Video $video)
     {
+        $this->authorizeOwner($request, $video);
         abort_if($video->status !== 'uploading', 409, 'Upload already finished.');
 
         $request->validate([
@@ -61,8 +65,14 @@ class VideoController extends Controller
             return response()->json(['expected' => $video->chunks], 409);
         }
 
+        $maxBytes = config('snipo.max_mb') * 1048576;
+        if ($maxBytes && $video->size + $request->file('chunk')->getSize() > $maxBytes) {
+            return response()->json(['message' => 'Video is larger than '.config('snipo.max_mb').' MB.'], 413);
+        }
+
+        File::ensureDirectoryExists(dirname($video->tempPath()));
         $in = fopen($request->file('chunk')->getRealPath(), 'rb');
-        $out = fopen($video->filePath(), 'ab');
+        $out = fopen($video->tempPath(), 'ab');
         $bytes = stream_copy_to_stream($in, $out);
         fclose($in);
         fclose($out);
@@ -73,12 +83,22 @@ class VideoController extends Controller
         return response()->json(['received' => $video->chunks]);
     }
 
-    /** Mark the upload as done. */
+    /** Move the assembled upload to the storage disk and mark it ready. */
     public function finish(Request $request, Video $video)
     {
+        $this->authorizeOwner($request, $video);
         $data = $request->validate(['duration' => 'nullable|numeric|min:0']);
 
-        abort_unless(is_file($video->filePath()) && filesize($video->filePath()) > 0, 422, 'No video data received.');
+        $temp = $video->tempPath();
+        abort_unless(is_file($temp) && filesize($temp) > 0, 422, 'No video data received.');
+
+        $stream = fopen($temp, 'rb');
+        $saved = Video::disk()->writeStream($video->fileKey(), $stream, ['ContentType' => $video->mime]);
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
+        abort_unless($saved, 500, 'Could not save the video. Please retry.');
+        @unlink($temp);
 
         $video->update([
             'status' => 'ready',
@@ -90,45 +110,56 @@ class VideoController extends Controller
 
     public function thumbnail(Request $request, Video $video)
     {
+        $this->authorizeOwner($request, $video);
         $request->validate(['thumbnail' => 'required|image|max:2048']);
-        File::ensureDirectoryExists(dirname($video->thumbPath()));
-        $request->file('thumbnail')->move(dirname($video->thumbPath()), basename($video->thumbPath()));
-        $video->update(['has_thumbnail' => true]);
+
+        $saved = Video::disk()->put($video->thumbKey(), $request->file('thumbnail')->get(), ['ContentType' => 'image/jpeg']);
+        $video->update(['has_thumbnail' => (bool) $saved]);
 
         return response()->noContent();
     }
 
     /** Public share page. */
-    public function show(Video $video)
+    public function show(Request $request, Video $video)
     {
         abort_if($video->status !== 'ready', 404);
 
-        return view('videos.show', compact('video'));
+        return view('videos.show', [
+            'video' => $video,
+            'isOwner' => $video->isOwnedBy($request->user()),
+        ]);
     }
 
-    /** Streams the video file (supports Range requests so seeking works). */
+    /** The video file. Local disk: streamed with Range support. Supabase: redirect to a short-lived signed URL. */
     public function file(Video $video)
     {
-        abort_unless(is_file($video->filePath()), 404);
+        abort_if($video->status !== 'ready', 404);
 
-        return response()->file($video->filePath(), [
-            'Content-Type' => $video->mime,
-            'Cache-Control' => 'private, max-age=3600',
-        ]);
+        return $this->serve($video->fileKey(), $video->mime);
     }
 
     public function download(Video $video)
     {
-        abort_unless(is_file($video->filePath()), 404);
+        abort_if($video->status !== 'ready', 404);
+        $name = str($video->title)->slug()->whenEmpty(fn () => str('video')).'.'.$video->extension;
 
-        return response()->download($video->filePath(), str($video->title)->slug().'.'.$video->extension);
+        if ($this->isLocalDisk()) {
+            $path = Video::disk()->path($video->fileKey());
+            abort_unless(is_file($path), 404);
+
+            return response()->download($path, $name);
+        }
+
+        return redirect(Video::disk()->temporaryUrl($video->fileKey(), now()->addMinutes(30), [
+            'ResponseContentDisposition' => 'attachment; filename="'.$name.'"',
+        ]));
     }
 
     public function thumb(Video $video)
     {
-        abort_unless($video->has_thumbnail && is_file($video->thumbPath()), 404);
+        abort_unless($video->has_thumbnail, 404);
 
-        return response()->file($video->thumbPath(), ['Content-Type' => 'image/jpeg']);
+        return $this->serve($video->thumbKey(), 'image/jpeg');
     }
 
     public function view(Video $video)
@@ -140,17 +171,42 @@ class VideoController extends Controller
 
     public function update(Request $request, Video $video)
     {
+        $this->authorizeOwner($request, $video);
         $data = $request->validate(['title' => 'required|string|max:150']);
         $video->update($data);
 
         return response()->json(['title' => $video->title]);
     }
 
-    public function destroy(Video $video)
+    public function destroy(Request $request, Video $video)
     {
-        File::delete([$video->filePath(), $video->thumbPath()]);
+        $this->authorizeOwner($request, $video);
+        Video::disk()->delete([$video->fileKey(), $video->thumbKey()]);
+        @unlink($video->tempPath());
         $video->delete();
 
         return redirect()->route('videos.index')->with('status', 'Video deleted.');
+    }
+
+    private function authorizeOwner(Request $request, Video $video): void
+    {
+        abort_unless($video->isOwnedBy($request->user()), 403);
+    }
+
+    private function isLocalDisk(): bool
+    {
+        return config('filesystems.disks.'.config('snipo.disk').'.driver') === 'local';
+    }
+
+    private function serve(string $key, string $mime)
+    {
+        if ($this->isLocalDisk()) {
+            $path = Video::disk()->path($key);
+            abort_unless(is_file($path), 404);
+
+            return response()->file($path, ['Content-Type' => $mime, 'Cache-Control' => 'private, max-age=3600']);
+        }
+
+        return redirect(Video::disk()->temporaryUrl($key, now()->addHours(2)));
     }
 }
